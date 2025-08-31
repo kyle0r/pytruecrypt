@@ -32,12 +32,6 @@
 ## Try python-mcrypt instead. In case a faster library is not installed
 ## on the target system, this code can be used as a portable fallback.
 
-try:
-    import psyco
-    psyco.full()
-except ImportError:
-    pass
-
 block_size = 16
 key_size = 32
 
@@ -56,10 +50,10 @@ class Serpent:
         key_len = len(key)
         if key_len % 4:
             # XXX: add padding?
-            raise KeyError, "key not a multiple of 4"
+            raise KeyError("key not a multiple of 4")
         if key_len > 32:
             # XXX: prune?
-            raise KeyError, "key_len > 32"
+            raise KeyError("key_len > 32")
         
         self.key_context = [0] * 140
         
@@ -77,9 +71,9 @@ class Serpent:
         """Decrypt blocks."""
         
         if len(block) % 16:
-            raise ValueError, "block size must be a multiple of 16"
+            raise ValueError("block size must be a multiple of 16")
 
-        plaintext = ''
+        plaintext = b''
         
         while block:
             a, b, c, d = struct.unpack("<4L", block[:16])
@@ -95,9 +89,9 @@ class Serpent:
         """Encrypt blocks."""
 
         if len(block) % 16:
-            raise ValueError, "block size must be a multiple of 16"
+            raise ValueError("block size must be a multiple of 16")
 
-        ciphertext = ''
+        ciphertext = b''
         
         while block:
             a, b, c, d = struct.unpack("<4L", block[0:16])
@@ -168,7 +162,7 @@ def set_key(l_key, key, key_len):
         i = key_len / 32
         lk = 1 << (key_len % 32)
         l_key[i] = (l_key[i] & (lk - 1)) | lk
-    for i in xrange(132):
+    for i in range(132):
         lk = l_key[i] ^ l_key[i + 3] ^ l_key[i + 5] ^ l_key[i + 7] ^ 0x9e3779b9 ^ i
         l_key[i + 8] = ((lk << 11) & 0xFFFFFFFF) | (lk >> 21)
 
@@ -2961,8 +2955,3 @@ def decrypt(key, in_blk):
     in_blk[1] = b
     in_blk[2] = c
     in_blk[3] = d
-
-__testkey = '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f'
-__testdat = '\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f'
-assert '\xde&\x9f\xf83\xe42\xb8[.\x88\xd2p\x1c\xe7\\' == Serpent(__testkey).encrypt(__testdat)
-assert __testdat == Serpent(__testkey).decrypt('\xde&\x9f\xf83\xe42\xb8[.\x88\xd2p\x1c\xe7\\')

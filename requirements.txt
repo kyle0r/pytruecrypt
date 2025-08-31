@@ -1,0 +1,4 @@
+wheel
+pycryptodome>=3.21.0
+twofish>=0.3.0
+Whirlpool @ git+https://github.com/oohlaf/python-whirlpool.git

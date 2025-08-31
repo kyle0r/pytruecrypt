@@ -25,32 +25,34 @@
 ## Changelog
 ## Jan 4 2008: Initial version. Plenty of room for improvements.
 
-import struct
-try:
-    import psyco
-    psyco.full()
-except ImportError:
-    pass
-
 import sys
 import os
 
-from rijndael import Rijndael
+from Crypto.Cipher import AES
 from serpent import Serpent
 from twofish import Twofish
 from lrw import *
 from keystrengthening import *
 
+class Rijndael:
+    def __init__(self, key):
+        self.cipher = AES.new(key, AES.MODE_ECB)
+
+    def encrypt(self, plaintext):
+        return self.cipher.encrypt(plaintext)
+
+    def decrypt(self, ciphertext):
+        return self.cipher.decrypt(ciphertext)
+
 #
 # Utilities.
 #
-
 import struct
 import time
 import binascii
 
 def Log(message):
-    print >> sys.stderr, "Progress:", message
+    print("Progress:", message, file=sys.stderr)
 
 def CRC32(data):
     """Compute CRC-32."""
@@ -73,7 +75,7 @@ def BE64(x):
 
 def Win32FileTime2UnixTime(filetime):
     """Converts a win32 FILETIME to a unix timestamp."""
-    return filetime / 10000000 - 11644473600
+    return filetime // 10000000 - 11644473600
 
 #
 # Ciphers.
@@ -81,22 +83,25 @@ def Win32FileTime2UnixTime(filetime):
 
 class CipherChain:
     def __init__(self, ciphers):
-        self.ciphers = [ciph() for ciph in ciphers]
+        self.cipher_list = ciphers
+        self.ciphers = [None] * len(self.cipher_list)
     def set_key(self, keys):
-        i = 0
-        for cipher in self.ciphers:
-            cipher.set_key(keys[i])
-            i += 1
+        for i, cipher in enumerate(self.cipher_list):
+            self.ciphers[i] = cipher(keys[i])
     def encrypt(self, data):
+        # create the encryption cascade
         for cipher in self.ciphers:
+            # data is accumulated each iteration
             data = cipher.encrypt(data)
         return data
     def decrypt(self, data):
+        # reverse the encryption cascade
         for cipher in reversed(self.ciphers):
+            # data is accumulated each iteration
             data = cipher.decrypt(data)
         return data
     def get_name(self):
-        return '-'.join(reversed([cipher.get_name() for cipher in self.ciphers]))
+        return '-'.join(reversed([type(cipher).__name__ for cipher in self.ciphers]))
 
 Cascades = [
     [Rijndael],
@@ -142,8 +147,8 @@ class TrueCryptVolume:
             salt = fileobj.read(64)
             header = fileobj.read(448)
             
-            assert len(salt) == 64
-            assert len(header) == 448
+            if len(salt) != 64: raise AssertionError('Unexpected salt length')
+            if len(header) != 448: raise AssertionError('Unexpected header length')
 
             for hmac, hmac_name in HMACs:
                 # Generate the keys needed to decrypt the volume header.
@@ -151,10 +156,7 @@ class TrueCryptVolume:
                 if hmac == HMAC_WHIRLPOOL:
                     iterations = 1000
 
-                info = ''
-                if hmac_name in "RIPEMD-160 Whirlpool":
-                    info = ' (this will take a while)'
-                progresscallback("Trying " + hmac_name + info)
+                progresscallback("Trying " + hmac_name)
                 
                 header_keypool = PBKDF2(hmac, password, salt, iterations, 128)
                 header_lrwkey = header_keypool[0:16]
@@ -167,9 +169,10 @@ class TrueCryptVolume:
                     # decrypt the header with it.
                     cipher = CipherChain(cascade)
                     
-                    progresscallback("..." + cipher.get_name())
-                    
                     cipher.set_key([header_key1, header_key2, header_key3])
+
+                    progresscallback("..." + cipher.get_name())
+
                     decrypted_header = LRWMany(cipher.decrypt, header_lrwkey, 1, header)
                     if TCIsValidVolumeHeader(decrypted_header):
                         # Success.
@@ -197,7 +200,7 @@ class TrueCryptVolume:
                         progresscallback("Success!")
                         return
         # Failed attempt.
-        raise KeyError, "incorrect password (or not a truecrypt volume)"
+        raise KeyError("incorrect password (or not a truecrypt volume)")
 
     def __repr__(self):
         if not self.decrypted_header:
@@ -207,11 +210,11 @@ class TrueCryptVolume:
 def TCIsValidVolumeHeader(header):
     magic = header[0:4]
     checksum = BE32(header[8:12])
-    return magic == 'TRUE' and CRC32(header[192:448]) == checksum
+    return magic == b'TRUE' and CRC32(header[192:448]) == checksum
 
 def TCReadSector(tc, index):
     """Read a sector from the volume."""
-    assert index > 0
+    if False is (index > 0): raise AssertionError('index is expected to be greater than zero')
     tc.fileobj.seek(0, 2)
     file_len = tc.fileobj.tell()
 
@@ -261,7 +264,7 @@ def TCSectorCount(tc):
         volume_size = tc.fileobj.tell()
         # Minus the salt+header.
         volume_size -= 512
-    return volume_size / TC_SECTOR_SIZE
+    return volume_size // TC_SECTOR_SIZE
 
 def TCPrintInformation(tc):
     if not tc.decrypted_header:
@@ -272,88 +275,80 @@ def TCPrintInformation(tc):
     volume_create = Win32FileTime2UnixTime(BE64(header[12:12+8]))
     header_create = Win32FileTime2UnixTime(BE64(header[20:20+8]))
 
-    print "="*60
-    print "Raw Header"
-    print "="*60
-    print repr(tc.decrypted_header)
-    print "="*60
-    print "Parsed Header"
-    print "="*60    
-    print "Hash          :", tc.info_hash
-    print "Cipher        :", tc.cipher.get_name()
+    print("="*60)
+    print("Raw Header")
+    print("="*60)
+    print(repr(tc.decrypted_header))
+    print("="*60)
+    print("Parsed Header")
+    print("="*60)
+    print("Hash          :", tc.info_hash)
+    print("Cipher        :", tc.cipher.get_name())
     if tc.hidden_size:
-        print "Volume Type   : Hidden"
-        print "Hidden size   :", tc.hidden_size
+        print("Volume Type   : Hidden")
+        print("Hidden size   :", tc.hidden_size)
     else:
-        print "Volume Type   : Normal"
-    print "Header Key    :", tc.info_headerkey
-    print "Header LRW Key:", tc.info_headerlrwkey
-    print "Master Key    :", tc.info_masterkey
-    print "Master LRW Key:", hexdigest(tc.master_lrwkey)
-    print "Format ver    :", hex(tc.format_ver)
-    print "Min prog. ver :", hex(program_ver)
-    print "Volume create :", time.asctime(time.localtime(volume_create))
-    print "Header create :", time.asctime(time.localtime(header_create))
-    print "="*60
+        print("Volume Type   : Normal")
+    print("Header Key    :", tc.info_headerkey)
+    print("Header LRW Key:", tc.info_headerlrwkey)
+    print("Master Key    :", tc.info_masterkey)
+    print("Master LRW Key:", hexdigest(tc.master_lrwkey))
+    print("Format ver    :", hex(tc.format_ver))
+    print("Min prog. ver :", hex(program_ver))
+    print("Volume create :", time.asctime(time.localtime(volume_create)))
+    print("Header create :", time.asctime(time.localtime(header_create)))
+    print("="*60)
 
 def cmdline():
     scriptname = sys.argv[0]
     try:
+        # TODO replace with argparse
         path, password, outfile = sys.argv[1:]
     except ValueError:
-        print >> sys.stderr, "%s volumepath password outfile" % scriptname
-        sys.exit(1)
+        raise SystemExit(f'{scriptname} volumepath password outfile')
 
-    if os.path.exists(outfile):
-        print >> sys.stderr, "outfile %s already exists. use another " \
-              "filename and try again (we don't want to overwrite " \
-              "files by mistake)" % outfile
-        sys.exit(1)
-
-    try:
-        fileobj = file(path, "rb")
-    except IOError:
-        print >> sys.stderr, "file %s doesn't exist" % path
-        sys.exit(1)
+    if outfile.lower() not in ['/dev/null', 'nul'] and os.path.exists(outfile):
+        raise SystemExit(f"outfile {outfile} already exists. use another "
+              "filename and try again (we don't want to overwrite "
+              "files by mistake)"
+        )
 
     try:
-        tc = TrueCryptVolume(fileobj, password, Log)
+        with open(path, 'rb') as fileobj:
+            tc = TrueCryptVolume(fileobj, password.encode(), Log)
+
+            TCPrintInformation(tc)
+
+            try:
+                with open(outfile, 'wb') as outfileobj:
+                    num_sectors = TCSectorCount(tc)
+                    num_written = 0
+                    for i in range(1, num_sectors + 1):
+                        if i % 100 == 0:
+                            Log(f"Decrypting sector {i} of {num_sectors}.")
+                        outfileobj.write(TCReadSector(tc, i))
+                        num_written += 1
+            except IOError:
+                raise SystemExit(f'IOError/OSError: problems writing to the output file: {outfile}')
+
+    except IOError as e:
+        import errno
+        if errno.EINVAL == e.errno:
+            raise SystemExit(f'Unable to seek to the requested position in the input file {path}')
+        raise SystemExit(f'''IOError/OSError: suspect input file {path} doesn't exist''')
+
     except KeyError:
-        print >> sys.stderr, "incorrect password or not a TrueCrypt volume"
-        fileobj.close()
-        sys.exit(1)
-    except KeyboardInterrupt:
-        print >> sys.stderr, "aborting"
-        fileobj.close()
-        sys.exit(1)
+        raise SystemExit('Incorrect password or not a TrueCrypt volume')
 
-    TCPrintInformation(tc)
-
-    outfileobj = file(outfile, "ab")
-    num_sectors = TCSectorCount(tc)
-    num_written = 0
-    try:
-        for i in xrange(1, num_sectors + 1):
-            if i % 100 == 0:
-                Log("Decrypting sector %d of %d." % (i, num_sectors))
-            outfileobj.write(TCReadSector(tc, i))
-            num_written += 1
     except KeyboardInterrupt:
-        print "Aborted decryption."
-        pass
-    outfileobj.close()
-    print "Wrote %d sectors (%d bytes)." % (num_written,
-                                            num_written * TC_SECTOR_SIZE)
-    fileobj.close()
-    sys.exit(0)
+        raise SystemExit('KeyboardInterrupt - Aborting...')
+
+    except Exception:
+        raise
+
+    print(f"Wrote {num_written} sectors ({num_written * TC_SECTOR_SIZE} bytes).", file=sys.stderr)
+
+    raise SystemExit()
 
 if __name__ == '__main__':
     cmdline()
-
-## If you want to use the code from the toploop:
-##
-#fileobj = file("volume.tc", "rb")
-#tc = TrueCryptVolume(fileobj, "password", Log)
-#TCPrintInformation(tc)
-#print repr(TCReadSector(tc, 1))
-#print repr(TCReadSector(tc, 2))
